@@ -13,3 +13,6 @@ resources:
     nodesPerZone: 3
     diskSize: 20
     opsCenterZone: us-central1-f
+    cassandraPwd: datastax1!
+    dsa_username: datastax@google.com
+    dsa_password: 8GdeeVT2s7zi

@@ -10,6 +10,9 @@ resources:
     - europe-west1-b
     - asia-east1-a
     machineType: n1-standard-2
-    nodesPerZone: 75
-    diskSize: 10
+    nodesPerZone: 3
+    diskSize: 30
     opsCenterZone: us-central1-f
+    cassandraPwd: datastax1!
+    dsa_username: datastax@google.com
+    dsa_password: 8GdeeVT2s7zi
