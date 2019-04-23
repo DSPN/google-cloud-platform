@@ -5,16 +5,24 @@ resources:
 - name: datastax
   type: datastax.py
   properties:
+    # GCP zones specified below will be grouped into 
+    # their respective GCP region as DSE data center
     zones:
-    - us-east1-b
-    - europe-west1-b
-    - asia-east1-a
-    machineType: n1-standard-2
-    nodesPerZone: 3
+    - us-central1-a
+    - us-central1-b
+    - us-central1-c
+    - us-west1-a
+    - us-west1-b
+    - us-west1-c
+    - europe-west2-a
+    - europe-west2-b
+    - europe-west2-c
+    machineType: n1-standard-4
+    nodesPerZone: 1
     dataDiskType: pd-ssd
     diskSize: 60
     opsCenterZone: us-central1-f
-    dseVersion: 6.0.0
+    dseVersion: 6.7.1
     cassandraPwd: datastax1!
     dsa_username: datastax@google.com
     dsa_password: 8GdeeVT2s7zi

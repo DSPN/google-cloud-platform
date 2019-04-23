@@ -2,44 +2,8 @@ import yaml
 import random
 import string
 
-def GetZonesList(context):
-    zones = []
-    if context.properties['usEast1b']:
-        zones.append('us-east1-b')
-    if context.properties['usEast1c']:
-        zones.append('us-east1-c')
-    if context.properties['usEast1d']:
-        zones.append('us-east1-d')
-    if context.properties['usCentral1a']:
-        zones.append('us-central1-a')
-    if context.properties['usCentral1b']:
-        zones.append('us-central1-b')
-    if context.properties['usCentral1c']:
-        zones.append('us-central1-c')
-    if context.properties['usCentral1f']:
-        zones.append('us-central1-f')
-    if context.properties['europeWest1b']:
-        zones.append('europe-west1-b')
-    if context.properties['europeWest1c']:
-        zones.append('europe-west1-c')
-    if context.properties['europeWest1d']:
-        zones.append('europe-west1-d')
-    if context.properties['asiaEast1a']:
-        zones.append('asia-east1-a')
-    if context.properties['asiaEast1b']:
-        zones.append('asia-east1-b')
-    if context.properties['asiaEast1c']:
-        zones.append('asia-east1-c')
-    assert len(zones) > 0, 'No zones selected for DataStax Enterprise nodes'
-    return zones
-
-
 def GenerateConfig(context):
     config = {'resources': []}
-
-    # Set zones list based on zone booleans.
-    if ('zones' not in context.properties or len(context.properties['zones']) == 0):
-        context.properties['zones'] = GetZonesList(context)
 
     # Set zone property to match ops center zone. Needed for calls to common.MakeGlobalComputeLink.
     context.properties['zone'] = context.properties['opsCenterZone']
@@ -102,27 +66,30 @@ def GenerateConfig(context):
         mkdir -p /mnt/data1/data
         mkdir -p /mnt/data1/saved_caches
         mkdir -p /mnt/data1/commitlog
+        mkdir -p /mnt/data1/dsefs
         chmod -R 777 /mnt/data1
 
         ##### Install DSE the LCM way
         cd ~ubuntu
-        release="7.0.3"
-        wget https://github.com/DSPN/install-datastax-ubuntu/archive/$release.tar.gz
+        release="7.3.0"
+        gsutil cp gs://install-datastax-ubuntu/$release.tar.gz .
         tar -xvf $release.tar.gz
-        # install extra OS packages
+        # install extra OS packages and OpenJDK
         pushd install-datastax-ubuntu-$release/bin
         ./os/extra_packages.sh
+        ./os/install_java.sh -o
         popd
 
         public_ip=`curl --retry 10 icanhazip.com`
         private_ip=`echo $(hostname -I)`
         node_id=$private_ip
         cluster_name=''' + cluster_name + '''
-        rack="rack1"
         db_pwd=''' + db_pwd + '''
 
+        region=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/zone" | grep -o [[:alnum:]-]*$ | cut -d- -f-2)
+        data_center_name=$region
         zone=$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/zone" | grep -o [[:alnum:]-]*$)
-        data_center_name=$zone
+        rack=$zone
 
         # Retrieve internal OPSC IP address
         opscenter_dns_name=''' + opscenter_dns_name + '''
@@ -140,9 +107,10 @@ def GenerateConfig(context):
         chown ubuntu:ubuntu lcm_pem.pub
         cat lcm_pem.pub >> authorized_keys
 
+        opsc_admin_pwd=''' + opsc_admin_pwd + '''
         cd ~ubuntu/install-datastax-ubuntu-$release/bin/lcm/
-
         ./addNode.py \
+        --opscpw $opsc_admin_pwd \
         --opsc-ip $opsc_ip \
         --clustername $cluster_name \
         --dcname $data_center_name \
@@ -198,16 +166,20 @@ def GenerateConfig(context):
  
       # Prepare for fresh OpsCenter installation
       cd ~ubuntu
-      release="7.0.3" 
-      wget https://github.com/DSPN/install-datastax-ubuntu/archive/$release.tar.gz
+      release="7.3.0"
+      gsutil cp gs://install-datastax-ubuntu/$release.tar.gz .
       tar -xvf $release.tar.gz
-      # install extra OS packages
+      # install extra OS packages and OpenJDK
       pushd install-datastax-ubuntu-$release/bin
       ./os/extra_packages.sh
-      ./os/install_java.sh
+      ./os/install_java.sh -o
       cloud_type="gce"
       ./opscenter/install.sh $cloud_type
-      ./opscenter/start.sh
+
+      # Update password for default DSE OpsCenter administrator (admin)
+      opsc_admin_pwd=''' + opsc_admin_pwd + '''
+      ./opscenter/set_opsc_pw_https.sh $opsc_admin_pwd
+      sleep 1m
       popd
 
       # Generate lcm_pem private and pubilc keys
@@ -246,18 +218,22 @@ def GenerateConfig(context):
       
       sleep 1m
 
-      ./setupCluster.py --user ubuntu --pause 60 --trys 40 --opsc-ip $private_ip --clustername $cluster_name --privkey $privkey --datapath /mnt/data1 --repouser $dsa_username --repopw $dsa_password --dbpasswd $db_pwd --dsever $dse_version
-      ./triggerInstall.py --opsc-ip $private_ip --clustername $cluster_name --clustersize $cluster_size 
-      ./waitForJobs.py --num 1 --opsc-ip $private_ip 
+      ./setupCluster.py --user ubuntu --pause 60 --trys 40 \
+      --opscpw $opsc_admin_pwd \
+      --opsc-ip $private_ip --clustername $cluster_name --privkey $privkey \
+      --datapath /mnt/data1 --repouser $dsa_username --repopw $dsa_password \
+      --dbpasswd $db_pwd --dsever $dse_version --nojava 
+
+      ./triggerInstall.py --opsc-ip $private_ip --opscpw $opsc_admin_pwd \
+      --clustername $cluster_name --clustersize $cluster_size 
+
+      ./waitForJobs.py --num 1 --opsc-ip $private_ip --opscpw $opsc_admin_pwd
 
       # Alter required keyspaces for multi-DC
-      ./alterKeyspaces.py
-
-      # Update password for default DSE OpsCenter administrator (admin)
-      # opsCenterAdminPwd
-      opsc_admin_pwd=''' + opsc_admin_pwd + '''
-      cd ../opscenter
-      ./set_opsc_pw_https.sh $opsc_admin_pwd
+      echo "Backgrounding call to alterKeyspaces.py, writing ouput to repair.log... "
+      nohup ./alterKeyspaces.py \
+      --opscpw $opsc_admin_pwd \
+      --delay 60 >> ../../repair.log &
 
       # Remove public key from Google cloud storage bucket
       gsutil rm gs://$sshkey_bucket/lcm_pem.pub
