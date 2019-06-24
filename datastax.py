@@ -102,16 +102,18 @@ def GenerateConfig(context):
         mkdir -p /mnt/data1/data
         mkdir -p /mnt/data1/saved_caches
         mkdir -p /mnt/data1/commitlog
+        mkdir -p /mnt/data1/dsefs
         chmod -R 777 /mnt/data1
 
         ##### Install DSE the LCM way
         cd ~ubuntu
-        release="7.0.3"
-        wget https://github.com/DSPN/install-datastax-ubuntu/archive/$release.tar.gz
-        tar -xvf $release.tar.gz
+        release="master"
+        gsutil cp gs://dse-gcp-marketplace/dse-gcp-install-$release.tar.gz .
+        tar -xvf dse-gcp-install-$release.tar.gz
         # install extra OS packages
-        pushd install-datastax-ubuntu-$release/bin
-        ./os/extra_packages.sh
+        pushd dse-gcp-install-$release
+        ./extra_packages.sh
+        ./install_java.sh -o
         popd
 
         public_ip=`curl --retry 10 icanhazip.com`
@@ -140,9 +142,11 @@ def GenerateConfig(context):
         chown ubuntu:ubuntu lcm_pem.pub
         cat lcm_pem.pub >> authorized_keys
 
-        cd ~ubuntu/install-datastax-ubuntu-$release/bin/lcm/
+        pushd ~ubuntu/dse-gcp-install-$release
+        opsc_admin_pwd=''' + opsc_admin_pwd + '''
 
         ./addNode.py \
+        --opscpw $opsc_admin_pwd \
         --opsc-ip $opsc_ip \
         --clustername $cluster_name \
         --dcname $data_center_name \
@@ -150,13 +154,15 @@ def GenerateConfig(context):
         --pubip $private_ip \
         --privip $private_ip \
         --nodeid $node_id \
+
+        popd
         '''
 
     zonal_clusters = {
         'name': 'clusters-' + context.env['name'],
         'type': 'regional_multi_vm.py',
         'properties': {
-            'sourceImage': 'https://www.googleapis.com/compute/v1/projects/datastax-public/global/images/datastax-enterprise-ubuntu-1604-xenial-v20180424',
+            'sourceImage': 'https://www.googleapis.com/compute/v1/projects/datastax-public/global/images/datastax-enterprise-ubuntu-1604-xenial-v20180824',
             'zones': context.properties['zones'],
             'machineType': context.properties['machineType'],
             'network': context.properties['network'],
@@ -198,16 +204,19 @@ def GenerateConfig(context):
  
       # Prepare for fresh OpsCenter installation
       cd ~ubuntu
-      release="7.0.3" 
-      wget https://github.com/DSPN/install-datastax-ubuntu/archive/$release.tar.gz
-      tar -xvf $release.tar.gz
-      # install extra OS packages
-      pushd install-datastax-ubuntu-$release/bin
-      ./os/extra_packages.sh
-      ./os/install_java.sh
-      cloud_type="gce"
-      ./opscenter/install.sh $cloud_type
-      ./opscenter/start.sh
+      release="master"
+      gsutil cp gs://dse-gcp-marketplace/dse-gcp-install-$release.tar.gz .
+      tar -xvf dse-gcp-install-$release.tar.gz
+
+      # install extra OS packages, Java, and OpsCenter
+      pushd dse-gcp-install-$release
+      ./extra_packages.sh
+      ./install_java.sh -o
+      ./installOpsc.sh
+
+      # Update password for default DSE OpsCenter administrator (admin)
+      opsc_admin_pwd=''' + opsc_admin_pwd + '''
+      ./set_opsc_pw_https.sh $opsc_admin_pwd
       popd
 
       # Generate lcm_pem private and pubilc keys
@@ -220,7 +229,7 @@ def GenerateConfig(context):
       popd
 
       # Set up cluster in OpsCenter the LCM way
-      cd ~ubuntu/install-datastax-ubuntu-$release/bin/lcm/
+      cd ~ubuntu/dse-gcp-install-$release
 
       # Generate cluster name
       cluster_name=''' + cluster_name + '''
@@ -246,18 +255,12 @@ def GenerateConfig(context):
       
       sleep 1m
 
-      ./setupCluster.py --user ubuntu --pause 60 --trys 40 --opsc-ip $private_ip --clustername $cluster_name --privkey $privkey --datapath /mnt/data1 --repouser $dsa_username --repopw $dsa_password --dbpasswd $db_pwd --dsever $dse_version
-      ./triggerInstall.py --opsc-ip $private_ip --clustername $cluster_name --clustersize $cluster_size 
-      ./waitForJobs.py --num 1 --opsc-ip $private_ip 
+      ./setupCluster.py --user ubuntu --pause 60 --opscpw $opsc_admin_pwd --trys 40 --opsc-ip $private_ip --clustername $cluster_name --privkey $privkey --datapath /mnt/data1 --repouser $dsa_username --repopw $dsa_password --dbpasswd $db_pwd --dsever $dse_version
+      ./triggerInstall.py --opsc-ip $private_ip --opscpw $opsc_admin_pwd --clustername $cluster_name --clustersize $cluster_size 
+      ./waitForJobs.py --num 1 --opsc-ip $private_ip --opscpw $opsc_admin_pwd
 
       # Alter required keyspaces for multi-DC
-      ./alterKeyspaces.py
-
-      # Update password for default DSE OpsCenter administrator (admin)
-      # opsCenterAdminPwd
-      opsc_admin_pwd=''' + opsc_admin_pwd + '''
-      cd ../opscenter
-      ./set_opsc_pw_https.sh $opsc_admin_pwd
+      ./alterKeyspaces.py --opscpw $opsc_admin_pwd --delay 60 >> ../../repair.log &
 
       # Remove public key from Google cloud storage bucket
       gsutil rm gs://$sshkey_bucket/lcm_pem.pub
@@ -270,7 +273,7 @@ def GenerateConfig(context):
         'type': 'vm_instance.py',
         'properties': {
             'instanceName': opscenter_node_name,
-            'sourceImage': 'https://www.googleapis.com/compute/v1/projects/datastax-public/global/images/datastax-enterprise-ubuntu-1604-xenial-v20180424',
+            'sourceImage': 'https://www.googleapis.com/compute/v1/projects/datastax-public/global/images/datastax-enterprise-ubuntu-1604-xenial-v20180824',
             'zone': context.properties['opsCenterZone'],
             'machineType': context.properties['machineType'],
             'network': context.properties['network'],

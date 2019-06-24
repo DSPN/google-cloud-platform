@@ -26,7 +26,7 @@ resources:
     dataDiskType: pd-ssd
     diskSize: 60
     opsCenterZone: us-central1-a
-    dseVersion: 6.0.0
+    dseVersion: 6.7.3
     cassandraPwd: datastax1!
     dsa_username: datastax@google.com
     dsa_password: 8GdeeVT2s7zi
